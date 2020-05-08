@@ -20,11 +20,15 @@ public class ConversionUtils {
     }
 
     public static long decode(String str) {
-        long num = 0;
-        for (int i = 0; i < str.length(); i++) {
-            int index = CHARS.indexOf(str.charAt(i));
-            num += (long) (index * (Math.pow(SCALE, str.length() - i - 1)));
+        try {
+            long num = 0;
+            for (int i = 0; i < str.length(); i++) {
+                int index = CHARS.indexOf(str.charAt(i));
+                num += (long) (index * (Math.pow(SCALE, str.length() - i - 1)));
+            }
+            return num;
+        }catch (Exception e) {
+            return 0;
         }
-        return num;
     }
 }
