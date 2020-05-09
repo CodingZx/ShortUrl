@@ -1,4 +1,4 @@
-create sequence url_idx_seq increment by 1 minvalue 1 no maxvalue start with 1;
+create sequence url_idx_seq increment by 366666 minvalue 1 no maxvalue start with 1;
 
 CREATE TABLE "public"."url_record" (
   "id" int4 NOT NULL,
