@@ -3,49 +3,60 @@ package lol.cicco.url;
 
 import io.vertx.core.Context;
 import io.vertx.core.Vertx;
-import io.vertx.pgclient.PgConnectOptions;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 import io.vertx.redis.client.RedisOptions;
 import io.vertx.rxjava.core.AbstractVerticle;
+import io.vertx.rxjava.ext.jdbc.JDBCClient;
+import io.vertx.rxjava.ext.sql.SQLClient;
 import io.vertx.rxjava.ext.web.Router;
-import io.vertx.rxjava.pgclient.PgPool;
 import io.vertx.rxjava.redis.client.Command;
 import io.vertx.rxjava.redis.client.Redis;
 import io.vertx.rxjava.redis.client.Request;
 import io.vertx.rxjava.redis.client.Response;
-import io.vertx.rxjava.sqlclient.Row;
-import io.vertx.rxjava.sqlclient.RowSet;
-import io.vertx.rxjava.sqlclient.Tuple;
-import io.vertx.sqlclient.PoolOptions;
 import lol.cicco.url.util.ConversionUtils;
 import lombok.extern.slf4j.Slf4j;
 import rx.Completable;
-import rx.Observable;
 import rx.Single;
-import rx.functions.Func1;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 @Slf4j
 public class RxServer extends AbstractVerticle {
-    private PgPool pgClient;
+    private SQLClient sqlClient;
     private Redis redis;
 
     @Override
     public void init(Vertx coreVertx, Context coreContext) {
         super.init(coreVertx, coreContext);
 
-        // Reactive Pg Client Document
-        // https://vertx.io/docs/vertx-pg-client/java
-        PgConnectOptions connectOptions = new PgConnectOptions()
-                .setPort(5432)
-                .setHost("127.0.0.1")
-                .setDatabase("short_url")
-                .setUser("postgres")
-                .setPassword("postgres");
+        JsonObject config = new JsonObject()
+                .put("provider_class", "io.vertx.ext.jdbc.spi.impl.HikariCPDataSourceProvider")
+                .put("jdbcUrl", "jdbc:postgresql://127.0.0.1:5432/short_url")
+                .put("driverClassName", "org.postgresql.Driver")
+                .put("username", "postgres")
+                .put("password", "zhaoxu@2020")
+                .put("initial_pool_size", 1)
+                .put("maximumPoolSize", 30)
+                .put("max_idle_time", 30);
 
-        // Pool options
-        PoolOptions poolOptions = new PoolOptions().setMaxSize(5);
+        sqlClient = JDBCClient.create(vertx, config);
 
-        // Create the pooled client
-        pgClient = PgPool.pool(vertx, connectOptions, poolOptions);
+//        // Reactive Pg Client Document
+//        // https://vertx.io/docs/vertx-pg-client/java
+//        PgConnectOptions connectOptions = new PgConnectOptions()
+//                .setPort(5432)
+//                .setHost("127.0.0.1")
+//                .setDatabase("short_url")
+//                .setUser("postgres")
+//                .setPassword("zhaoxu@2020");
+//
+//        // Pool options
+//        PoolOptions poolOptions = new PoolOptions().setMaxSize(5);
+//
+//        // Create the pooled client
+//        pgClient = PgPool.pool(vertx, connectOptions, poolOptions);
 
         // Redis Client Document
         // https://vertx.io/docs/vertx-redis-client/java/
@@ -82,16 +93,15 @@ public class RxServer extends AbstractVerticle {
                 if(id == 0) {
                     return Single.just(null);
                 }
-                return pgClient.rxGetConnection().flatMap(
+                return sqlClient.rxGetConnection().flatMap(
                         sqlConnection ->
-                                sqlConnection.preparedQuery("select long_url from url_record where id = $1")
-                                        .rxExecute(Tuple.of(id))
+                                sqlConnection.rxQueryWithParams("select long_url from url_record where id = $1", new JsonArray().add(id))
                                         .doAfterTerminate(sqlConnection::close)
-                ).map(rows -> {
-                    if(rows.rowCount() == 0) {
+                ).map(rs -> {
+                    if(rs == null) {
                         return null;
                     }
-                    var originUrl = rows.iterator().next().getString("long_url");
+                    var originUrl = rs.toJson().getString("long_url");
                     saveToRedis(id, originUrl);
                     return originUrl;
                 });
@@ -104,6 +114,34 @@ public class RxServer extends AbstractVerticle {
                     response.setStatusCode(302).end();
                 }
             });
+        });
+
+        router.post("/create").handler(context -> {
+           var longUrl = context.request().getParam("url");
+           if(longUrl == null || longUrl.isBlank()) {
+               context.response().setStatusCode(200).write(new JsonObject().put("code", 400).put("msg", "url参数不能为空").toString()).end();
+               return;
+           }
+           sqlClient.rxGetConnection().flatMap(sqlConnection -> {
+               return sqlConnection.rxQuery("select nextval('url_idx_seq') as seq").flatMap(resultSet -> {
+                   var nextIdx = resultSet.getRows().get(0).getLong("seq");
+                   var insert = sqlConnection.rxUpdateWithParams("insert into url_record(id, long_url, create_time) values(?, ?, '"+LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))+"')", new JsonArray().add(nextIdx).add(longUrl));
+                   saveToRedis(nextIdx, longUrl);
+                   insert.doAfterTerminate(() -> {
+                       sqlConnection.rxCommit().subscribe(r -> {
+                           sqlConnection.close();
+                       });
+                   });
+                   insert.subscribe(r -> {
+                       log.debug("insert doing....");
+                   });
+                   return Single.just(nextIdx);
+               });
+           }).subscribe(id -> {
+               JsonObject result = new JsonObject();
+               result.put("code", 200).put("msg","success").put("shortUrl", "http://127.0.0.1:8888/" + ConversionUtils.encode(id));
+               context.response().setStatusCode(200).write(result.toString()).end();
+           });
         });
         return vertx.createHttpServer().requestHandler(router).rxListen(8888).toCompletable();
     }
