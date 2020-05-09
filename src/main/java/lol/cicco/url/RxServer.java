@@ -1,7 +1,11 @@
 package lol.cicco.url;
 
 
+import io.vertx.config.ConfigRetriever;
+import io.vertx.config.ConfigRetrieverOptions;
+import io.vertx.config.ConfigStoreOptions;
 import io.vertx.core.Context;
+import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -18,6 +22,7 @@ import lol.cicco.url.util.ConversionUtils;
 import lombok.extern.slf4j.Slf4j;
 import rx.Completable;
 import rx.Single;
+import rx.functions.Action0;
 import rx.functions.Action1;
 
 import java.net.URLDecoder;
@@ -25,6 +30,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 public class RxServer extends AbstractVerticle {
@@ -36,16 +42,9 @@ public class RxServer extends AbstractVerticle {
     public void init(Vertx coreVertx, Context coreContext) {
         super.init(coreVertx, coreContext);
 
-        JsonObject config = new JsonObject()
-                .put("provider_class", "io.vertx.ext.jdbc.spi.impl.HikariCPDataSourceProvider")
-                .put("jdbcUrl", "jdbc:postgresql://127.0.0.1:5432/short_url")
-                .put("driverClassName", "org.postgresql.Driver")
-                .put("username", "postgres")
-                .put("password", "zhaoxu@2020")
-                .put("maximumPoolSize", 1)
-                .put("max_idle_time", 30);
-
-        sqlClient = JDBCClient.create(vertx, config);
+        var json = config();
+        System.out.println(json);
+        sqlClient = JDBCClient.create(vertx, config());
 
 //        // Reactive Pg Client Document
 //        // https://vertx.io/docs/vertx-pg-client/java
@@ -181,12 +180,41 @@ public class RxServer extends AbstractVerticle {
     }
 
     public static void main(String[] args) {
-        Vertx.vertx().deployVerticle(new RxServer(), handler -> {
-            if (handler.succeeded()) {
-                log.info("DeployVerticle Succeeded.");
+
+        AtomicReference<String> atomicReference = new AtomicReference<>();
+
+        var vertx = Vertx.vertx();
+        ConfigRetriever retriever = ConfigRetriever.create(vertx, new ConfigRetrieverOptions()
+                .setScanPeriod(2000) // 扫描时间间隔 ms
+                .addStore(new ConfigStoreOptions().setType("file").setConfig(new JsonObject().put("path", "config.json"))));
+
+
+        Action1<JsonObject> deployAction = (config) -> {
+            vertx.deployVerticle(new RxServer(), new DeploymentOptions().setConfig(config), deployHandler -> {
+                if (deployHandler.succeeded()) {
+                    log.info("DeployVerticle Succeeded. Verticle ID is {} ", deployHandler.result());
+                    atomicReference.set(deployHandler.result());
+                } else {
+                    log.error("DeployVerticle Failed.");
+                }
+            });
+        };
+
+        retriever.getConfig(configHandler -> {
+            if(configHandler.succeeded()) {
+                deployAction.call(configHandler.result());
             } else {
-                log.info("DeployVerticle Failed.");
+                log.error("无法获得配置文件");
             }
+        });
+
+        retriever.listen(change -> {
+            JsonObject conf = change.getNewConfiguration();
+            vertx.undeploy(atomicReference.get(), undeployHandler -> {
+                if(undeployHandler.succeeded()) {
+                    deployAction.call(conf);
+                }
+            });
         });
     }
 }
