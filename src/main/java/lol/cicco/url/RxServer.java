@@ -42,8 +42,7 @@ public class RxServer extends AbstractVerticle {
                 .put("driverClassName", "org.postgresql.Driver")
                 .put("username", "postgres")
                 .put("password", "zhaoxu@2020")
-                .put("initial_pool_size", 1)
-                .put("maximumPoolSize", 30)
+                .put("maximumPoolSize", 1)
                 .put("max_idle_time", 30);
 
         sqlClient = JDBCClient.create(vertx, config);
