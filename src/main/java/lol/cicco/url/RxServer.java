@@ -22,7 +22,6 @@ import lol.cicco.url.util.ConversionUtils;
 import lombok.extern.slf4j.Slf4j;
 import rx.Completable;
 import rx.Single;
-import rx.functions.Action0;
 import rx.functions.Action1;
 
 import java.net.URLDecoder;
@@ -42,8 +41,6 @@ public class RxServer extends AbstractVerticle {
     public void init(Vertx coreVertx, Context coreContext) {
         super.init(coreVertx, coreContext);
 
-        var json = config();
-        System.out.println(json);
         sqlClient = JDBCClient.create(vertx, config());
 
 //        // Reactive Pg Client Document
@@ -184,10 +181,11 @@ public class RxServer extends AbstractVerticle {
         AtomicReference<String> atomicReference = new AtomicReference<>();
 
         var vertx = Vertx.vertx();
-        ConfigRetriever retriever = ConfigRetriever.create(vertx, new ConfigRetrieverOptions()
-                .setScanPeriod(2000) // 扫描时间间隔 ms
-                .addStore(new ConfigStoreOptions().setType("file").setConfig(new JsonObject().put("path", "config.json"))));
-
+        ConfigRetriever retriever = ConfigRetriever.create(vertx,
+                new ConfigRetrieverOptions()
+                    .setScanPeriod(30000) // 扫描时间间隔 ms
+                    .addStore(new ConfigStoreOptions().setType("file").setConfig(new JsonObject().put("path", "config.json")))
+        );
 
         Action1<JsonObject> deployAction = (config) -> {
             vertx.deployVerticle(new RxServer(), new DeploymentOptions().setConfig(config), deployHandler -> {
